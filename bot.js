@@ -11,9 +11,9 @@ init(autoreset=True)
 
 def print_banner():
     banner = f"""
-{Fore.CYAN}{Style.BRIGHT}╔══════════════════════════════════════════════╗
+{Fore.CYAN}{Style.BRIGHT}╔══════════════════════
 ║          BlockMesh 网络自动挂机脚本           ║
-║     Telegram: https://t.me/Crypto_airdropHM     ║
+║        ║
 ║      欢迎使用，请自行承担风险！              ║
 ╚══════════════════════════════════════════════╝
 """
