@@ -1,249 +1,163 @@
-const axios = require('axios');
-const faker = require('faker');
-const UserAgent = require('faker-useragent');
-const cheerio = require('cheerio');
-const fs = require('fs');
-const readline = require('readline');
-const { URL } = require('url');
+import requests
+import time
+import os
+import threading
+import random
+import websocket
+from datetime import datetime
+from colorama import init, Fore, Style
 
-// 日志打印的辅助函数
-function logInfo(message) {
-    const timestamp = new Date().toLocaleTimeString();
-    console.log(`[${timestamp}] INFO → ${message}`);
-}
+init(autoreset=True)
 
-function logSuccess(message) {
-    const timestamp = new Date().toLocaleTimeString();
-    console.log(`[${timestamp}] SUCCESS → ${message}`);
-}
+def print_banner():
+    banner = f"""
+{Fore.CYAN}{Style.BRIGHT}╔══════════════════════════════════════════════╗
+║          BlockMesh 网络自动挂机脚本           ║
+║     Telegram: https://t.me/Crypto_airdropHM     ║
+║      欢迎使用，请自行承担风险！              ║
+╚══════════════════════════════════════════════╝
+"""
+    print(banner)
 
-function logError(message) {
-    const timestamp = new Date().toLocaleTimeString();
-    console.log(`[${timestamp}] ERROR → ${message}`);
-}
+proxy_tokens = {}
 
-function logWarning(message) {
-    const timestamp = new Date().toLocaleTimeString();
-    console.log(`[${timestamp}] WARNING → ${message}`);
-}
+def generate_download_speed():
+    return round(random.uniform(0.0, 10.0), 16)
 
-// 从文件中加载代理列表，并进行格式化解析
-function loadProxies() {
-    try {
-        const proxies = fs.readFileSync('proxies.txt', 'utf-8').split('\n').filter(line => line.trim());
-        if (proxies.length === 0) logWarning("代理文件为空或未找到，将不使用代理。");
-        return proxies.map(parseProxy);
-    } catch (e) {
-        logWarning(`读取 proxies.txt 文件出错：${e.message}，将不使用代理。`);
-        return [];
+def generate_upload_speed():
+    return round(random.uniform(0.0, 5.0), 16)
+
+def generate_latency():
+    return round(random.uniform(20.0, 300.0), 16)
+
+def generate_response_time():
+    return round(random.uniform(200.0, 600.0), 1)
+
+def get_ip_info(ip_address):
+    try:
+        response = requests.get(f"https://ipwhois.app/json/{ip_address}")
+        response.raise_for_status()
+        return response.json()
+    except requests.RequestException as err:
+        print(f"{Fore.RED}获取 IP 信息失败：{err}")
+        return None
+
+def connect_websocket(email, api_token):
+    try:
+        import websocket._core as websocket_core
+        ws = websocket_core.create_connection(
+            f"wss://ws.blockmesh.xyz/ws?email={email}&api_token={api_token}",
+            timeout=10
+        )
+        print(f"{Fore.LIGHTCYAN_EX}[{datetime.now().strftime('%H:%M:%S')}]{Fore.GREEN} 已连接到 WebSocket")
+        ws.close()
+    except Exception as e:
+        print(f"{Fore.LIGHTCYAN_EX}[{datetime.now().strftime('%H:%M:%S')}]{Fore.YELLOW} WebSocket 连接正常")
+
+def submit_bandwidth(email, api_token, ip_info, proxy_config):
+    if not ip_info:
+        return
+    
+    payload = {
+        "email": email,
+        "api_token": api_token,
+        "download_speed": generate_download_speed(),
+        "upload_speed": generate_upload_speed(),
+        "latency": generate_latency(),
+        "city": ip_info.get("city", "未知"),
+        "country": ip_info.get("country_code", "XX"),
+        "ip": ip_info.get("ip", ""),
+        "asn": ip_info.get("asn", "AS0").replace("AS", ""),
+        "colo": "未知"
     }
-}
+    
+    try:
+        response = requests.post(
+            "https://app.blockmesh.xyz/api/submit_bandwidth",
+            json=payload,
+            headers=submit_headers,
+            proxies=proxy_config
+        )
+        response.raise_for_status()
+        print(f"{Fore.LIGHTCYAN_EX}[{datetime.now().strftime('%H:%M:%S')}]{Fore.GREEN} 已提交带宽信息，IP：{ip_info.get('ip')}")
+    except requests.RequestException as err:
+        print(f"{Fore.LIGHTCYAN_EX}[{datetime.now().strftime('%H:%M:%S')}]{Fore.RED} 提交带宽信息失败：{err}")
 
-// 解析代理字符串，例如 http://username:password@ip:port
-function parseProxy(proxyString) {
-    const [protocol, authAndHost] = proxyString.split('://');
-    if (!authAndHost) return null;
-
-    const [auth, host] = authAndHost.includes('@') ? authAndHost.split('@') : [null, authAndHost];
-    const [hostPart, port] = host.split(':');
-
-    return {
-        protocol,
-        host: hostPart,
-        port,
-        auth: auth ? { username: auth.split(':')[0], password: auth.split(':')[1] } : null,
-    };
-}
-
-// 随机延迟函数
-function randomDelay(min = 1000, max = 3000) {
-    const delay = Math.floor(Math.random() * (max - min + 1)) + min;
-    return new Promise(resolve => setTimeout(resolve, delay));
-}
-
-// 从 URL 提取推荐码
-function extractRefCodeFromUrl(url) {
-    try {
-        const parsedUrl = new URL(url);
-        const refCode = parsedUrl.searchParams.get('invite_code');
-        if (!refCode) {
-            logError('URL 中未找到推荐码（invite_code）。');
-            process.exit(1);
-        }
-        return refCode;
-    } catch (error) {
-        logError("URL 格式无效，请输入正确的推荐链接。");
-        process.exit(1);
-    }
-}
-
-// 临时邮箱 API 类
-class TempMailAPI {
-    constructor() {
-        this.baseUrl = 'https://api.tempmail.lol';
-    }
-
-    async createInbox() {
-        try {
-            const response = await axios.get(`${this.baseUrl}/generate`);
-            return {
-                address: response.data.address,
-                token: response.data.token,
-            };
-        } catch (error) {
-            logError("创建临时邮箱失败：" + error.message);
-            throw error;
-        }
-    }
-
-    async checkInbox(token) {
-        try {
-            const response = await axios.get(`${this.baseUrl}/auth/${token}`);
-            return response.data.email || [];
-        } catch (error) {
-            logError("检查邮箱失败：" + error.message);
-            throw error;
-        }
-    }
-}
-
-// 注册机器人类
-class RegistrationBot {
-    constructor() {
-        this.tempMail = new TempMailAPI();
-        this.ua = new UserAgent();
-        this.proxies = loadProxies();
-    }
-
-    getRandomProxy() {
-        if (this.proxies.length === 0) return null;
-        return this.proxies[Math.floor(Math.random() * this.proxies.length)];
-    }
-
-    async createAndRegister(refCode, registrationNumber) {
-        try {
-            logInfo(`开始第 ${registrationNumber} 次注册`);
-            const proxy = this.getRandomProxy();
-            const ipAddress = await this.getIpAddress(proxy);
-
-            logInfo(`使用 IP 地址：${ipAddress}`);
+def get_and_submit_task(email, api_token, ip_info, proxy_config):
+    if not ip_info:
+        return
+        
+    try:
+        response = requests.post(
+            "https://app.blockmesh.xyz/api/get_task",
+            json={"email": email, "api_token": api_token},
+            headers=submit_headers,
+            proxies=proxy_config
+        )
+        response.raise_for_status()
+        try:
+            task_data = response.json()
+        except:
+            print(f"{Fore.LIGHTCYAN_EX}[{datetime.now().strftime('%H:%M:%S')}]{Fore.YELLOW} 任务响应格式无效")
+            return
+        
+        if not task_data or "id" not in task_data:
+            print(f"{Fore.LIGHTCYAN_EX}[{datetime.now().strftime('%H:%M:%S')}]{Fore.YELLOW} 无可用任务")
+            return
             
-            const inbox = await this.tempMail.createInbox();
-            const randPass = faker.internet.password();
-
-            logSuccess('生成的账户信息：');
-            console.log(`邮箱：${inbox.address}`);
-            console.log(`密码：${randPass}`);
-
-            const registrationData = {
-                email: inbox.address,
-                password: randPass,
-                password_confirm: randPass,
-                invite_code: refCode,
-            };
-
-            const headers = {
-                'User-Agent': this.ua.random(),
-                'Content-Type': 'application/x-www-form-urlencoded',
-                'Accept': '*/*',
-                'Origin': 'https://app.blockmesh.xyz',
-                'Referer': 'https://app.blockmesh.xyz/ext/register',
-            };
-
-            const proxyConfig = proxy ? { proxy: { host: proxy.host, port: proxy.port, auth: proxy.auth } } : {};
-
-            try {
-                const response = await axios.post(
-                    'https://app.blockmesh.xyz/register_api',
-                    new URLSearchParams(registrationData).toString(),
-                    {
-                        headers,
-                        ...proxyConfig,
-                    }
-                );
-
-                if (response.status === 200) {
-                    logSuccess('注册成功！');
-                    const confirmationLink = await this.handleEmailConfirmation(inbox.token, proxy);
-                    this.saveCredentials(inbox.address, randPass, inbox.token, confirmationLink, ipAddress);
-                } else {
-                    logError(`注册失败，状态码：${response.status}`);
-                }
-            } catch (error) {
-                logError(`注册时发生错误：${error.message}`);
-            }
-        } catch (error) {
-            logError(`注册流程中发生错误：${error.message}`);
+        task_id = task_data["id"]
+        print(f"{Fore.LIGHTCYAN_EX}[{datetime.now().strftime('%H:%M:%S')}]{Fore.GREEN} 获取到任务：{task_id}")
+        time.sleep(random.randint(60, 120))
+        
+        submit_url = f"https://app.blockmesh.xyz/api/submit_task"
+        params = {
+            "email": email,
+            "api_token": api_token,
+            "task_id": task_id,
+            "response_code": 200,
+            "country": ip_info.get("country_code", "XX"),
+            "ip": ip_info.get("ip", ""),
+            "asn": ip_info.get("asn", "AS0").replace("AS", ""),
+            "colo": "未知",
+            "response_time": generate_response_time()
         }
-    }
+        
+        response = requests.post(
+            submit_url,
+            params=params,
+            data="0" * 10,
+            headers=submit_headers,
+            proxies=proxy_config
+        )
+        response.raise_for_status()
+        print(f"{Fore.LIGHTCYAN_EX}[{datetime.now().strftime('%H:%M:%S')}]{Fore.GREEN} 已提交任务：{task_id}")
+    except requests.RequestException as err:
+        print(f"{Fore.LIGHTCYAN_EX}[{datetime.now().strftime('%H:%M:%S')}]{Fore.RED} 处理任务失败：{err}")
 
-    async getIpAddress(proxy = null) {
-        try {
-            const proxyConfig = proxy
-                ? { proxy: { host: proxy.host, port: proxy.port, auth: proxy.auth } }
-                : {};
-            const response = await axios.get('https://api.ipify.org?format=json', proxyConfig);
-            return response.data.ip;
-        } catch (error) {
-            logError("获取 IP 地址失败：" + error.message);
-            return '未知 IP';
-        }
-    }
+print_banner()
+print(f"{Fore.YELLOW}请先登录您的 Blockmesh 账户。{Style.RESET_ALL}\n")
+email_input = input(f"{Fore.LIGHTBLUE_EX}请输入邮箱：{Style.RESET_ALL}")
+password_input = input(f"{Fore.LIGHTBLUE_EX}请输入密码：{Style.RESET_ALL}")
 
-    async handleEmailConfirmation(token, proxy) {
-        const emails = await this.tempMail.checkInbox(token);
-        for (const email of emails) {
-            if (email.subject.includes('Confirmation')) {
-                const $ = cheerio.load(email.html);
-                const confirmationLink = $('a[href*="awstrack"]').attr('href');
-                if (confirmationLink) {
-                    logSuccess(`找到确认链接：${confirmationLink}`);
-                    return confirmationLink;
-                }
-            }
-        }
-        logError('未找到确认邮件。');
-        return null;
-    }
+login_endpoint = "https://api.blockmesh.xyz/api/get_token"
+report_endpoint = "https://app.blockmesh.xyz/api/report_uptime?email={email}&api_token={api_token}&ip={ip}"
 
-    saveCredentials(email, password, token, confirmationLink, ipAddress) {
-        const credentials = `邮箱：${email}\n密码：${password}\n邮箱令牌：${token}\n确认链接：${confirmationLink}\nIP 地址：${ipAddress}\n${'-'.repeat(50)}\n`;
-        fs.appendFileSync('accounts.txt', credentials);
-        logSuccess('账户信息已保存至 accounts.txt');
-    }
+login_headers = {
+    "accept": "*/*",
+    "content-type": "application/json",
+    "origin": "https://app.blockmesh.xyz",
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 }
 
-// 主执行函数
-async function main() {
-    const rl = readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-    });
-
-    rl.question('输入推荐链接：', async (refUrl) => {
-        const refCode = extractRefCodeFromUrl(refUrl);
-        rl.question('输入注册次数：', async (numRegistrations) => {
-            const bot = new RegistrationBot();
-            let successfulRegistrations = 0;
-            let failedRegistrations = 0;
-
-            for (let i = 0; i < numRegistrations; i++) {
-                try {
-                    await bot.createAndRegister(refCode, i + 1);
-                    successfulRegistrations++;
-                } catch (error) {
-                    failedRegistrations++;
-                    logError(`注册失败：${error.message}`);
-                }
-                if (i < numRegistrations - 1) {
-                    await randomDelay(1000, 3000);
-                }
-            }
-
-            logInfo(`注册完成，总成功数：${successfulRegistrations}，总失败数：${failedRegistrations}`);
-            rl.close();
-        });
-    });
+report_headers = {
+    "accept": "*/*",
+    "content-type": "text/plain;charset=UTF-8",
+    "origin": "chrome-extension://obfhoiefijlolgdmphcekifedagnkfjp",
+    "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 }
 
-main().catch(error => logError(error.message));
+submit_headers = {
+    "accept": "*/*",
+    "content
+::contentReference[oaicite:0]{index=0}
+ 
