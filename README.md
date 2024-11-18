@@ -1,4 +1,4 @@
-# BlockMesh Network AutoBot
+# BlockMesh挂机 Bot
 
 欢迎使用 BlockMesh Network AutoBot！此工具旨在通过模拟带宽提交和任务处理，帮助用户自动化与 BlockMesh 网络的交互。
 
